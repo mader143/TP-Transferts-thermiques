@@ -25,10 +25,10 @@ class Weather_Data():
         self.wind_dir = self.excel["Wind Dir (10s deg)"] # h change en fonction de la direction du vent. 0:pas de vent, 9: vent Est, 18: vent du Sud, 27: vent Ouest, 36: vent Nord
 
 class Tuyau:
-    def __init__(self, Q_daily = 950, D_iso_out = 0.15, D_iso_in = None, D_tuy_int = None, L = 5300):
+    def __init__(self, Q_daily = 950, D_iso_out = 0.15, D_iso_int = None, D_tuy_int = None, L = 5300):
         self.Q_daily = Q_daily  # débit m3/jour
         self.D_iso_out = D_iso_out
-        self.D_iso_in = D_iso_in
+        self.D_iso_int = D_iso_int
         self.D_tuy_int = D_tuy_int
         self.A = np.pi*D_iso_out**2/4
         self.Q = self.Q_daily/86400    # débit m3/s
@@ -54,8 +54,8 @@ class Tuyau:
         return 1/(h_water*np.pi*self.D_iso_out) 
     
     def get_R_cond_tuyau(self):
-        R_tuyau = self._get_R_cond(self.D_iso_in, self.D_tuy_int, self.k_tuyau)
-        R_iso = self._get_R_cond(self.D_iso_out, self.D_iso_in, self.k_tuyau)
+        R_tuyau = self._get_R_cond(self.D_iso_int, self.D_tuy_int, self.k_tuyau)
+        R_iso = self._get_R_cond(self.D_iso_out, self.D_iso_int, self.k_tuyau)
         
         return R_tuyau + R_iso  # en série
     
@@ -73,8 +73,8 @@ class Tuyau:
 
 
 class Tuyau_Enfouie(Tuyau):
-    def __init__(self, Q_daily = 950, D_iso_out = 0.15,  D_iso_in = None, D_tuy_int = None, L = 5300):
-        super().__init__(Q_daily, D_iso_out, D_iso_in, D_tuy_int, L)
+    def __init__(self, Q_daily = 950, D_iso_out = 0.15,  D_iso_int = None, D_tuy_int = None, L = 5300):
+        super().__init__(Q_daily, D_iso_out, D_iso_int, D_tuy_int, L)
     
     def set_ground_property(self, depth, k_sol, T_sol):
         self.depth = depth
@@ -90,21 +90,17 @@ class Tuyau_Enfouie(Tuyau):
     def get_linear_heat_flux(self):
         dT = self.water_temp - self.T_sol
         q = dT/self.get_R_tot()
-        
         return q
     
     def get_thermal_power(self):
         q = self.get_linear_heat_flux()
         
-        return q*self.L
-    
-    
-    
+        return q*self.L   
 
 
 class Tuyau_Ext(Tuyau):
-    def __init__(self, Q_daily, D_iso_out, D_iso_in = None, D_tuy_int = None, L = 5300):
-        super().__init__(Q_daily, D_iso_out, D_iso_in, D_tuy_int, L)
+    def __init__(self, Q_daily, D_iso_out, D_iso_int = None, D_tuy_int = None, L = 5300):
+        super().__init__(Q_daily, D_iso_out, D_iso_int, D_tuy_int, L)
     
     def get_R_conv_air(self):
         pass
@@ -142,7 +138,7 @@ class Tuyau_Ext(Tuyau):
             return h_air
         
         else:
-            raise ValueError("Approximation invalide") #quoi faire dans ce cas
+            raise ValueError("Approximation invalide") # quoi faire dans ce cas
     
 
     
