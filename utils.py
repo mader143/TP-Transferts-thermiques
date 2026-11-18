@@ -26,6 +26,9 @@ class Weather_Data():
 
 
 class Pipe3D:
+    """
+    Permet de visualiser la conduite. ENTIÈREMENT GÉNÉRÉ PAR IA!!!
+    """
     def __init__(self, r, R):
         self.lat_long = [
             (60.062830940231535, -77.22336734920782), (60.06128478681783, -77.22101103213207), 
