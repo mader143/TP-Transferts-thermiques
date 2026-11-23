@@ -33,8 +33,9 @@ class Tuyau:
         self.A = np.pi*D_iso_out**2/4
         self.Q = self.Q_daily/86400    # débit m3/s
         self.V = self.Q/self.A  # vitesse m/s
-        self.L = 5300 #m
+        self.L = L #m
         self.T_safe = T_safe
+        self.SIGMA = 5.67e-8
         
     def set_water_property(self, water_temp = 275, nu_water = 1.5e-6, k_water = 0.565, Pr_water = 12.5, rho_water = 1000, cp_water = 4180, T_source = 273.5):
         # valeur pour 1C
@@ -51,19 +52,25 @@ class Tuyau:
         self.k_iso = k_iso
         
     def get_R_conv_water(self):
+        #linéique
         ReD_water = self._get_ReD(self.V, self.D_iso_out, self.nu_water)
         NuD_water = self._get_NuD_water(ReD_water)
         h_water = self._get_h_water(NuD_water)
         
         return 1/(h_water*np.pi*self.D_iso_out) 
     
-    def get_R_cond_tuyau(self):
+    def get_R_tuyau(self):
+        #linéique
         R_tuyau = self._get_R_cond(self.D_iso_int, self.D_tuy_int, self.k_tuyau)
-        R_iso = self._get_R_cond(self.D_iso_out, self.D_iso_int, self.k_iso)
         
-        return R_tuyau + R_iso  # en série
+        return R_tuyau
+
+    def get_R_iso(self):
+        R_iso = self._get_R_cond(self.D_iso_out, self.D_iso_int, self.k_iso)
+        return R_iso
     
     def _get_R_cond(self, D_ext, D_int, k_cond):
+        #linéique
         return np.log(D_ext/D_int)/(2*np.pi*k_cond)
        
     def _get_ReD(self, V, D_iso_out, nu):
@@ -86,10 +93,12 @@ class Tuyau_Enfouie(Tuyau):
         self.T_sol = T_sol
     
     def get_R_sol(self):
+        #linéique
         return np.arccosh(2*self.depth/self.D_iso_out)/(2*np.pi*self.k_sol)
     
     def get_R_tot(self):
-        return self.get_R_conv_water() + self.get_R_cond_tuyau() +self.get_R_sol() 
+        #linéique
+        return self.get_R_conv_water() + self.get_R_tuyau() + self.get_R_iso() +self.get_R_sol() 
     
     # def get_linear_heat_flux(self):
     #     dT = self.water_temp - self.T_sol
@@ -112,24 +121,64 @@ class Tuyau_Enfouie(Tuyau):
         return self.Psh
 
     def get_power_tracing(self):
-        #Puissance de traçage
-        self.Pt_lineique = ((self.T_safe - (self.T_source*np.exp(-self.L/(self.get_R_tot()*self.Q*self.rho_water*self.cp_water))))/(1 - np.exp(-self.L/(self.get_R_tot()*self.Q*self.rho_water*self.cp_water))) - self.T_sol)/self.get_R_tot()
-        self.Pt = self.Pt_lineique*self.L
+        #Puissance de traçage (circuit thermique qui prends en compte les deux directions de perte de chaleur qin et qout)
+        C_dot = self.Q * self.rho_water * self.cp_water
+        R_tot = self.get_R_tot()
+        R_out = self.get_R_sol() +self.get_R_iso()
+        NTU = self.L / (R_tot * C_dot)
+        T_eq = (self.T_safe - self.T_source * np.exp(-NTU)) / (1 - np.exp(-NTU))
+        self.Pt_lineique = (T_eq - self.T_sol) / R_out
+        self.Pt = self.Pt_lineique * self.L
         return self.Pt
 
 
 class Tuyau_Ext(Tuyau):
     def __init__(self, Q_daily, D_iso_out, D_iso_int = None, D_tuy_int = None, L = 5300):
         super().__init__(Q_daily, D_iso_out, D_iso_int, D_tuy_int, L)
+
+    def set_air_property(self, T_air, wind_speed_ms, emissivite = 0.85, T_env = None):
+        self.T_air = T_air          # K
+        self.wind_speed = wind_speed_ms # m/s
+        self.emissivite = emissivite
+        self.T_env = T_air if T_env is None else T_env # K
+        self.T_surf = T_air         # K
+
+    def _solve_T_surf(self, tol = 1e-6, max_iter = 100):
+        R_int = self.get_R_conv_water() + self.get_R_tuyau() + self.get_R_iso()
+        T_surf = self.T_air
+
+        for _ in range(max_iter):
+            R_ext = 1/(1/self.get_R_conv_air(T_surf) + 1/self.get_R_rad(T_surf))
+            T_surf_new = (self.water_temp/R_int + self.T_env/R_ext) / (1/R_int + 1/R_ext)
+            if abs(T_surf_new - T_surf) < tol:
+                self.T_surf = T_surf_new
+                return self.T_surf
+            T_surf = T_surf_new
+
+        self.T_surf = T_surf
+        return self.T_surf
     
-    def get_R_conv_air(self):
-        pass
+    def get_R_conv_air(self, T_surf = None):
+        #linéique
+        if T_surf is None:
+            T_surf = self.T_surf
+        Tf = 0.5*((T_surf - 273.15) + (self.T_air - 273.15)) # en C pour _get_air_property
+        h_air = self._get_h_air(Tf, self.wind_speed)
+        self.R_conv_air = 1/(h_air*np.pi*self.D_iso_out)
+        return self.R_conv_air
     
-    def get_R_rad(self):
-        pass
+    def get_R_rad(self, T_surf = None):
+        #linéique
+        if T_surf is None:
+            T_surf = self.T_surf
+        h_rad = self.emissivite * self.SIGMA * (T_surf + self.T_env) * (T_surf**2 + self.T_env**2)
+        self.R_rad = 1/(h_rad*np.pi*self.D_iso_out)
+        return self.R_rad
 
     def get_R_tot(self):
-            return self.get_R_conv_water() + self.get_R_cond_tuyau() + 1/(1/self.get_R_conv_air() + 1/self.get_R_rad) #rad et conv air en parallele
+        #linéique
+        T_surf = self._solve_T_surf()
+        return self.get_R_conv_water() + self.get_R_tuyau() + self.get_R_iso() + 1/(1/self.get_R_conv_air(T_surf) + 1/self.get_R_rad(T_surf)) #rad et conv air en parallele
     
     def _get_air_property(self, Tf):
         #Interpolation pour les propriétés de l'air à la bonne température
@@ -157,12 +206,22 @@ class Tuyau_Ext(Tuyau):
             den = (1.0 + (0.4 / Pr_air)**(2/3))**(1/4)
             bracket = (1.0 + (ReD_air / 282000.0)**(5/8))**(4/5)
             NuD_air = 0.3 + (num / den) * bracket
-            h_air = (NuD_air * k_air) / self.D_iso_out
-            
-            return h_air
         
-        else:
-            raise ValueError("Approximation invalide") # quoi faire dans ce cas
+        else: #Convection naturelle, Churchill and Chu (RaD < 10^12)
+            g = 9.81
+            Tf_k = Tf + 273.15
+            beta = 1.0 / Tf_k
+            dT = max(self.T_surf - self.T_air, 1e-3)
+            RaD = (g * beta * dT * (self.D_iso_out**3) / (nu_air**2)) * Pr_air
+
+            NuD_air = (
+                0.60
+                + (0.387 * (RaD**(1/6)))
+                / ((1.0 + (0.559 / Pr_air)**(9/16))**(8/27))
+            )**2
+
+        h_air = (NuD_air * k_air) / self.D_iso_out
+        return h_air
     
 
     
