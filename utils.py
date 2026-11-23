@@ -25,7 +25,7 @@ class Weather_Data():
         self.wind_dir = self.excel["Wind Dir (10s deg)"] # h change en fonction de la direction du vent. 0:pas de vent, 9: vent Est, 18: vent du Sud, 27: vent Ouest, 36: vent Nord
 
 class Tuyau:
-    def __init__(self, Q_daily = 950, D_iso_out = 0.15, D_iso_int = None, D_tuy_int = None, L = 5300):
+    def __init__(self, Q_daily = 950, D_iso_out = 0.15, D_iso_int = None, D_tuy_int = None, L = 5300, T_safe = 275):
         self.Q_daily = Q_daily  # débit m3/jour
         self.D_iso_out = D_iso_out
         self.D_iso_int = D_iso_int
@@ -34,13 +34,17 @@ class Tuyau:
         self.Q = self.Q_daily/86400    # débit m3/s
         self.V = self.Q/self.A  # vitesse m/s
         self.L = 5300 #m
+        self.T_safe = T_safe
         
-    def set_water_property(self, water_temp = 275, nu_water = 1.5e-6, k_water = 0.565, Pr_water = 12.5):
+    def set_water_property(self, water_temp = 275, nu_water = 1.5e-6, k_water = 0.565, Pr_water = 12.5, rho_water = 1000, cp_water = 4180, T_source = 273.5):
         # valeur pour 1C
         self.water_temp = water_temp
         self.nu_water = nu_water
         self.k_water = k_water
         self.Pr_water = Pr_water
+        self.rho_water = rho_water
+        self.cp_water = cp_water
+        self.T_source = T_source
     
     def set_material_property(self, k_tuyau, k_iso):
         self.k_tuyau = k_tuyau
@@ -55,7 +59,7 @@ class Tuyau:
     
     def get_R_cond_tuyau(self):
         R_tuyau = self._get_R_cond(self.D_iso_int, self.D_tuy_int, self.k_tuyau)
-        R_iso = self._get_R_cond(self.D_iso_out, self.D_iso_int, self.k_tuyau)
+        R_iso = self._get_R_cond(self.D_iso_out, self.D_iso_int, self.k_iso)
         
         return R_tuyau + R_iso  # en série
     
@@ -87,15 +91,31 @@ class Tuyau_Enfouie(Tuyau):
     def get_R_tot(self):
         return self.get_R_conv_water() + self.get_R_cond_tuyau() +self.get_R_sol() 
     
-    def get_linear_heat_flux(self):
-        dT = self.water_temp - self.T_sol
-        q = dT/self.get_R_tot()
-        return q
+    # def get_linear_heat_flux(self):
+    #     dT = self.water_temp - self.T_sol
+    #     q = dT/self.get_R_tot()
+    #     return q
     
-    def get_thermal_power(self):
-        q = self.get_linear_heat_flux()
+    # def get_thermal_power(self):
+    #     q = self.get_linear_heat_flux()
         
-        return q*self.L   
+    #     return q*self.L   
+
+    def get_Ti(self):
+        #Donne la température d'entrée qui permet à l'eau de rester au dessus de T_safe (2C) (sans traçage)
+        self.Ti = (self.T_safe - self.T_sol)*np.exp(self.L/(self.get_R_tot()*self.Q*self.rho_water*self.cp_water)) + self.T_sol
+        return self.Ti
+
+    def get_power_source_heating(self):
+        #Puissance pour chauffer l'eau de source à la température Ti sécuritaire
+        self.Psh = self.Q*self.rho_water*self.cp_water*(self.get_Ti() - self.T_source)
+        return self.Psh
+
+    def get_power_tracing(self):
+        #Puissance de traçage
+        self.Pt_lineique = ((self.T_safe - (self.T_source*np.exp(-self.L/(self.get_R_tot()*self.Q*self.rho_water*self.cp_water))))/(1 - np.exp(-self.L/(self.get_R_tot()*self.Q*self.rho_water*self.cp_water))) - self.T_sol)/self.get_R_tot()
+        self.Pt = self.Pt_lineique*self.L
+        return self.Pt
 
 
 class Tuyau_Ext(Tuyau):
@@ -107,6 +127,9 @@ class Tuyau_Ext(Tuyau):
     
     def get_R_rad(self):
         pass
+
+    def get_R_tot(self):
+            return self.get_R_conv_water() + self.get_R_cond_tuyau() + 1/(1/self.get_R_conv_air() + 1/self.get_R_rad) #rad et conv air en parallele
     
     def _get_air_property(self, Tf):
         #Interpolation pour les propriétés de l'air à la bonne température
@@ -124,6 +147,7 @@ class Tuyau_Ext(Tuyau):
         return nu, k, Pr
     
     def _get_h_air(self, Tf, wind_speed):
+        #wind speed doit être en m/s
         
         nu_air, k_air, Pr_air = self._get_air_property(Tf)
         ReD_air = self._get_ReD(wind_speed, self.D_iso_out, nu_air)
