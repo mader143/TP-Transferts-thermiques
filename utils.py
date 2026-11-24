@@ -5,13 +5,35 @@ import pandas as pd
 
 class Weather_Data():
     def __init__(self, path : str):
-        self.excel = pd.read_excel(path)
+        self.excel = pd.read_excel(path, nrows=8784) # Garde juste les données de 2024
         self._data_handler() # modifiera les données pour combler les données manquantes
         
     def _data_handler(self) -> None:
         """
         Traite les données manquantes
         """
+
+        # Colonnes à traiter pour les données manquantes
+        columns = ["Temp (°C)", "Wind Spd (km/h)", "Wind Dir (10s deg)"]
+
+        # Remplacer les valeurs par les valeurs 24h plus tôt (approximation)
+        while self.excel[columns].isna().any().any():
+
+            if self.excel[columns].shift(24).isna().any().any(): # Si c'est dans les premières 24h
+                new = self.excel[columns].fillna(self.excel[columns].shift(1))
+
+            else:
+                new = self.excel[columns].fillna(self.excel[columns].shift(24))
+
+            if new.equals(self.excel[columns]):
+                break
+            self.excel[columns] = new
+
+        if self.excel[columns].isna().any().any():
+            print(self.excel[self.excel[columns].isna().any(axis=1)])
+            raise ValueError("Les données contiennent encore des valeurs manquantes après traitement.")
+            
+
         
         # il faut ajouter la logique pour sélectionner une période d'intérêt / méthode d'interpollation ou tronquer / etc.
         
@@ -23,6 +45,8 @@ class Weather_Data():
         self.temp_k = self.temp_c + 273.15
         self.wind_speed = self.excel["Wind Spd (km/h)"]
         self.wind_dir = self.excel["Wind Dir (10s deg)"] # h change en fonction de la direction du vent. 0:pas de vent, 9: vent Est, 18: vent du Sud, 27: vent Ouest, 36: vent Nord
+
+        
 
 class Tuyau:
     def __init__(self, Q_daily = 950, D_iso_out = 0.15, D_iso_int = None, D_tuy_int = None, L = 5300, T_safe = 275):
