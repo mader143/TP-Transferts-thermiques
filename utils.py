@@ -46,6 +46,14 @@ class Weather_Data():
         self.wind_speed = self.excel["Wind Spd (km/h)"]
         self.wind_dir = self.excel["Wind Dir (10s deg)"] # h change en fonction de la direction du vent. 0:pas de vent, 9: vent Est, 18: vent du Sud, 27: vent Ouest, 36: vent Nord
 
+
+    def get_properties_for_h_numpy(self):
+        # Permet de traiter les données en numpy array pour les calculs de h
+        self.np_wind_speed = self.wind_speed.to_numpy() / 3.6 # m/s
+        self.np_temp_k = self.temp_k.to_numpy() # K
+
+
+
         
 
 class Tuyau:
@@ -224,6 +232,37 @@ class Tuyau_Ext(Tuyau):
         
         nu_air, k_air, Pr_air = self._get_air_property(Tf)
         ReD_air = self._get_ReD(wind_speed, self.D_iso_out, nu_air)
+
+        if type(ReD_air) == np.ndarray: # Traiter le cas où on a l'array
+
+            def churchill_bernstein(ReD_air, Pr_air):
+                num = 0.62 * (ReD_air**0.5) * (Pr_air**(1/3))
+                den = (1.0 + (0.4 / Pr_air)**(2/3))**(1/4)
+                bracket = (1.0 + (ReD_air / 282000.0)**(5/8))**(4/5)
+                return 0.3 + (num / den) * bracket
+
+
+            # RECURSION ERROR avec cette méthode. On appelle solve_T_surf, qui appelle _get_h_air...
+            def convection_naturelle(ReD_air, Pr_air, nu_air, Tf):
+                g = 9.81
+                Tf_k = Tf + 273.15
+                beta = 1.0 / Tf_k
+                self.set_air_property(T_air = Tf, wind_speed_ms = wind_speed)
+                self.set_water_property()
+                self.set_material_property(k_tuyau = 0.2, k_iso = 0.04) # Valeurs par défaut pour le tuyau et l'isolant
+                self._solve_T_surf()
+                dT = max(self.T_surf - self.T_air, 1e-3) 
+                RaD = (g * beta * dT * (self.D_iso_out**3) / (nu_air**2)) * Pr_air
+
+                return (
+                    0.60
+                    + (0.387 * (RaD**(1/6)))
+                    / ((1.0 + (0.559 / Pr_air)**(9/16))**(8/27))
+                )**2
+
+            # Remplacer le 0 par la convection naturelle quand ça marchera.
+            h_air = np.where(ReD_air*Pr_air >= 0.2, churchill_bernstein(ReD_air, Pr_air), 0.0)
+            return h_air
         
         if ReD_air*Pr_air >= 0.2: #Churchill-Bernstein
             num = 0.62 * (ReD_air**0.5) * (Pr_air**(1/3))
