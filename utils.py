@@ -180,6 +180,7 @@ class Tuyau_Ext(Tuyau):
         T_surf = self.T_air
 
         for _ in range(max_iter):
+            self.T_surf = T_surf
             R_ext = 1/(1/self.get_R_conv_air(T_surf) + 1/self.get_R_rad(T_surf))
             T_surf_new = (self.water_temp/R_int + self.T_env/R_ext) / (1/R_int + 1/R_ext)
             if abs(T_surf_new - T_surf) < tol:
@@ -239,52 +240,43 @@ class Tuyau_Ext(Tuyau):
                 num = 0.62 * (ReD_air**0.5) * (Pr_air**(1/3))
                 den = (1.0 + (0.4 / Pr_air)**(2/3))**(1/4)
                 bracket = (1.0 + (ReD_air / 282000.0)**(5/8))**(4/5)
-                return 0.3 + (num / den) * bracket
+                NuD_air = 0.3 + (num / den) * bracket
+                return NuD_air
 
-
-            # RECURSION ERROR avec cette méthode. On appelle solve_T_surf, qui appelle _get_h_air...
-            def convection_naturelle(ReD_air, Pr_air, nu_air, Tf):
+            def convection_naturelle(Pr_air, nu_air, Tf):
                 g = 9.81
                 Tf_k = Tf + 273.15
                 beta = 1.0 / Tf_k
-                self.set_air_property(T_air = Tf, wind_speed_ms = wind_speed)
-                self.set_water_property()
-                self.set_material_property(k_tuyau = 0.2, k_iso = 0.04) # Valeurs par défaut pour le tuyau et l'isolant
-                self._solve_T_surf()
-                dT = max(self.T_surf - self.T_air, 1e-3) 
+                self.set_air_property(T_air=Tf_k, wind_speed_ms=wind_speed)
+                dT = np.maximum(self.T_surf - self.T_air, 1e-3)
                 RaD = (g * beta * dT * (self.D_iso_out**3) / (nu_air**2)) * Pr_air
 
-                return (
-                    0.60
-                    + (0.387 * (RaD**(1/6)))
-                    / ((1.0 + (0.559 / Pr_air)**(9/16))**(8/27))
-                )**2
+                NuD_air = (0.60 + (0.387 * (RaD**(1/6))) / ((1.0 + (0.559 / Pr_air)**(9/16))**(8/27)))**2
+                return NuD_air
 
-            # Remplacer le 0 par la convection naturelle quand ça marchera.
-            h_air = np.where(ReD_air*Pr_air >= 0.2, churchill_bernstein(ReD_air, Pr_air), 0.0)
+            h_air = np.where(ReD_air*Pr_air >= 0.2, churchill_bernstein(ReD_air, Pr_air), convection_naturelle(Pr_air, nu_air, Tf))* k_air / self.D_iso_out
             return h_air
-        
-        if ReD_air*Pr_air >= 0.2: #Churchill-Bernstein
-            num = 0.62 * (ReD_air**0.5) * (Pr_air**(1/3))
-            den = (1.0 + (0.4 / Pr_air)**(2/3))**(1/4)
-            bracket = (1.0 + (ReD_air / 282000.0)**(5/8))**(4/5)
-            NuD_air = 0.3 + (num / den) * bracket
-        
-        else: #Convection naturelle, Churchill and Chu (RaD < 10^12)
-            g = 9.81
-            Tf_k = Tf + 273.15
-            beta = 1.0 / Tf_k
-            dT = max(self.T_surf - self.T_air, 1e-3)
-            RaD = (g * beta * dT * (self.D_iso_out**3) / (nu_air**2)) * Pr_air
-
-            NuD_air = (
-                0.60
-                + (0.387 * (RaD**(1/6)))
-                / ((1.0 + (0.559 / Pr_air)**(9/16))**(8/27))
-            )**2
-
-        h_air = (NuD_air * k_air) / self.D_iso_out
-        return h_air
+    
+    def get_Ti(self):
+            #Donne la température d'entrée qui permet à l'eau de rester au dessus de T_safe (2C) (sans traçage)
+            self.Ti = (self.T_safe - self.T_air)*np.exp(self.L/(self.get_R_tot()*self.Q*self.rho_water*self.cp_water)) + self.T_air
+            return self.Ti
+    
+    def get_power_source_heating(self):
+        #Puissance pour chauffer l'eau de source à la température Ti sécuritaire
+        self.Psh = self.Q*self.rho_water*self.cp_water*(self.get_Ti() - self.T_source)
+        return self.Psh
+    
+    def get_power_tracing(self):
+        #Puissance de traçage (circuit thermique qui prends en compte les deux directions de perte de chaleur qin et qout)
+        C_dot = self.Q * self.rho_water * self.cp_water
+        R_tot = self.get_R_tot()
+        R_out = 1/(1/self.get_R_conv_air() + 1/self.get_R_rad()) +self.get_R_iso()
+        NTU = self.L / (R_tot * C_dot)
+        T_eq = (self.T_safe - self.T_source * np.exp(-NTU)) / (1 - np.exp(-NTU))
+        self.Pt_lineique = (T_eq - self.T_air) / R_out
+        self.Pt = self.Pt_lineique * self.L
+        return self.Pt
     
 
     
