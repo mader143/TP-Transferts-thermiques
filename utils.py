@@ -258,9 +258,9 @@ class Tuyau_Ext(Tuyau):
             return h_air
     
     def get_Ti(self):
-            #Donne la température d'entrée qui permet à l'eau de rester au dessus de T_safe (2C) (sans traçage)
-            self.Ti = (self.T_safe - self.T_air)*np.exp(self.L/(self.get_R_tot()*self.Q*self.rho_water*self.cp_water)) + self.T_air
-            return self.Ti
+        #Donne la température d'entrée qui permet à l'eau de rester au dessus de T_safe (2C) (sans traçage)
+        self.Ti = (self.T_safe - self.T_air)*np.exp(self.L/(self.get_R_tot()*self.Q*self.rho_water*self.cp_water)) + self.T_air
+        return self.Ti
     
     def get_power_source_heating(self):
         #Puissance pour chauffer l'eau de source à la température Ti sécuritaire
